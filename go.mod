@@ -1,4 +1,4 @@
-module github.com/go-text/render
+module github.com/Tualua/go-textrender
 
 go 1.19
 

@@ -1,10 +1,12 @@
 package render
 
 import (
+	"image"
 	"image/color"
 	"image/draw"
 	"math"
 
+	scanFT "github.com/Tualua/scanFT"
 	"github.com/go-text/typesetting/font"
 	"github.com/go-text/typesetting/font/opentype"
 	"github.com/go-text/typesetting/shaping"
@@ -58,11 +60,11 @@ func (r *Renderer) shape(str string, face *font.Face) (_ shaping.Line, ascent in
 // The text will be drawn starting at the left edge, down from the image top by the
 // font ascent value, so that the text is all visible.
 // The return value is the X pixel position of the end of the drawn string.
-func (r *Renderer) DrawString(str string, img draw.Image, face *font.Face) int {
+func (r *Renderer) DrawString(str string, img draw.Image, face *font.Face, aa bool) int {
 	line, ascent := r.shape(str, face)
 	x := 0
 	for _, run := range line {
-		x = r.DrawShapedRunAt(run, img, x, ascent)
+		x = r.DrawShapedRunAt(run, img, x, ascent, aa)
 	}
 	return x
 }
@@ -71,10 +73,10 @@ func (r *Renderer) DrawString(str string, img draw.Image, face *font.Face) int {
 // The text will be drawn starting at the x, y pixel position.
 // Note that x and y are not multiplied by the `PixScale` value as they refer to output coordinates.
 // The return value is the X pixel position of the end of the drawn string.
-func (r *Renderer) DrawStringAt(str string, img draw.Image, x, y int, face *font.Face) int {
-	line, _ := r.shape(str, face)
+func (r *Renderer) DrawStringAt(str string, img draw.Image, x, y int, face *font.Face, aa bool) int {
+	line, ascent := r.shape(str, face)
 	for _, run := range line {
-		x = r.DrawShapedRunAt(run, img, x, y)
+		x = r.DrawShapedRunAt(run, img, x, y+ascent, aa)
 	}
 	return x
 }
@@ -83,7 +85,20 @@ func (r *Renderer) DrawStringAt(str string, img draw.Image, x, y int, face *font
 // The text will be drawn starting at the startX, startY pixel position.
 // Note that startX and startY are not multiplied by the `PixScale` value as they refer to output coordinates.
 // The return value is the X pixel position of the end of the drawn string.
-func (r *Renderer) DrawShapedRunAt(run shaping.Output, img draw.Image, startX, startY int) int {
+func (r *Renderer) GetRenderedSize(str string, face *font.Face) (int, int) {
+	if r.PixScale == 0 {
+		r.PixScale = 1
+	}
+	x := float32(0)
+	line, ascent := r.shape(str, face)
+	for _, run := range line {
+		for _, g := range run.Glyphs {
+			x += fixed266ToFloat(g.XAdvance) * r.PixScale
+		}
+	}
+	return int(math.Ceil(float64(x))), ascent
+}
+func (r *Renderer) DrawShapedRunAt(run shaping.Output, img draw.Image, startX, startY int, aa bool) int {
 	if r.PixScale == 0 {
 		r.PixScale = 1
 	}
@@ -91,7 +106,25 @@ func (r *Renderer) DrawShapedRunAt(run shaping.Output, img draw.Image, startX, s
 	r.fillerScale = scale
 
 	b := img.Bounds()
-	scanner := rasterx.NewScannerGV(b.Dx(), b.Dy(), img, b)
+
+	//Use scanner from scanFT
+	var painter scanFT.Painter
+	if !aa {
+		painter = scanFT.NewMonochromePainter(
+			scanFT.NewRGBAColFuncPainter(
+				scanFT.NewRGBAPainter(img.(*image.RGBA)),
+			),
+		)
+	} else {
+		painter = scanFT.NewRGBAColFuncPainter(
+			scanFT.NewRGBAPainter(img.(*image.RGBA)),
+		)
+	}
+	scanner := scanFT.NewScannerFT(b.Dx(), b.Dy(), painter)
+
+	// Use built-in scanner
+	// scanner := rasterx.NewScannerGV(b.Dx(), b.Dy(), img, b)
+
 	f := rasterx.NewFiller(b.Dx(), b.Dy(), scanner)
 	r.filler = f
 	f.SetColor(r.Color)
